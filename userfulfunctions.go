@@ -9,6 +9,7 @@ import (
 	"math/rand"
 	"reflect"
 	"strconv"
+	"sync"
 	//	js "github.com/rshmelev/go-json-light"
 	"io/ioutil"
 	"net/http"
@@ -23,10 +24,10 @@ type UsefulFunctions struct {
 }
 
 func (_ *UsefulFunctions) AppendSlash(str string) string {
-	if strings.HasSuffix(str, "/") {
+	if strings.HasSuffix(str, "/") || strings.HasSuffix(str, string(os.PathSeparator)) {
 		return str
 	}
-	return str + "/"
+	return str + string(os.PathSeparator) // "/"
 }
 
 func (f *UsefulFunctions) RegexExtract(rx, str string) (string, error) {
@@ -50,6 +51,14 @@ func (f *UsefulFunctions) RegexReplace(source, rx, repl string) (string, error) 
 	return res, nil
 }
 
+func (f *UsefulFunctions) RegexReplaceOrDie(source, rx, repl string) string {
+	r, e := f.RegexReplace(source, rx, repl)
+	if e != nil {
+		panic(e)
+	}
+	return r
+}
+
 func (_ *UsefulFunctions) FindKeyByValue(m map[string]string, v string) (string, error) {
 	for i, vv := range m {
 		if vv == v {
@@ -70,6 +79,48 @@ func (f *UsefulFunctions) Trace(params ...interface{}) {
 	}
 	println("\n")
 
+}
+
+func (f *UsefulFunctions) SendPostRequest(url string, data []byte, timeout time.Duration) (int, []byte, error) {
+
+	ch := make(chan int, 1)
+	if timeout != 0 {
+		go func() {
+			time.Sleep(timeout)
+			ch <- 1
+		}()
+	}
+
+	type PostResponse struct {
+		StatusCode int
+		Body       []byte
+		Err        error
+	}
+
+	anotherch := make(chan *PostResponse, 1)
+	go func() {
+		var jsonStr = data
+		req, err := http.NewRequest("POST", url, bytes.NewBuffer(jsonStr))
+		req.Header.Set("Content-Type", "application/json")
+
+		client := &http.Client{}
+		resp, err := client.Do(req)
+		if err != nil {
+			anotherch <- &PostResponse{0, nil, err}
+			return
+		}
+		defer resp.Body.Close()
+
+		body, e := ioutil.ReadAll(resp.Body)
+		anotherch <- &PostResponse{resp.StatusCode, body, e}
+	}()
+
+	select {
+	case <-ch:
+		return 0, nil, errors.New("timeout")
+	case r := <-anotherch:
+		return r.StatusCode, r.Body, r.Err
+	}
 }
 
 func (f *UsefulFunctions) GetContents(url string, timeout time.Duration) *HttpStringResponse {
@@ -275,7 +326,39 @@ func (f *UsefulFunctions) GenPublicIpFile() string {
 	return b.Body
 }
 
-//
+//--------------------------
+
+type UniqueIntsPool struct {
+	mutex           sync.Mutex
+	ints            map[int]int
+	Base            int
+	SearchIncrement int
+}
+
+func (p *UniqueIntsPool) Return(i int) {
+	p.mutex.Lock()
+	if p.ints == nil {
+		p.ints = make(map[int]int)
+	}
+	delete(p.ints, i)
+	p.mutex.Unlock()
+}
+func (p *UniqueIntsPool) Take() int {
+	p.mutex.Lock()
+	if p.ints == nil {
+		p.ints = make(map[int]int)
+	}
+	defer p.mutex.Unlock()
+	i := p.Base
+	for {
+		_, ok := p.ints[i]
+		if !ok {
+			p.ints[i] = 1
+			return i
+		}
+		i += p.SearchIncrement
+	}
+}
 
 //---------------------------
 

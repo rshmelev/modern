@@ -4,7 +4,6 @@ import (
 	"bufio"
 	"bytes"
 	"fmt"
-	"github.com/rshmelev/gologs/libgologs"
 	"log"
 	"math/rand"
 	"net/http"
@@ -13,6 +12,8 @@ import (
 	"runtime"
 	"strings"
 	"time"
+
+	"github.com/rshmelev/gologs/libgologs"
 
 	"github.com/julienschmidt/httprouter"
 	"github.com/rshmelev/easyws"
@@ -28,6 +29,7 @@ type LoggingRedirector struct {
 	ch   chan []byte
 }
 
+// TODO possible bug here
 func CreateLoggingRedirector(baselogger libgologs.SomeLogger) *LoggingRedirector {
 	x := &LoggingRedirector{
 		elog: baselogger,
@@ -39,8 +41,12 @@ func CreateLoggingRedirector(baselogger libgologs.SomeLogger) *LoggingRedirector
 
 	go func() {
 		for {
-			a := <-x.ch
-			x.Write(a)
+			a, ok := <-x.ch
+			if !ok {
+				break
+			}
+			//println(string(a))
+			x.b.Write(a)
 			s, _ := reader.ReadString('\n')
 			x.elog.Error("http issue: " + s)
 		}
@@ -179,7 +185,7 @@ func AttachSubdirFileServer(router *httprouter.Router, subdir string, webroot st
 //=====================================================================================================================
 
 func AttachHealthPointServer(router *httprouter.Router, url string, appName string, version string, dev bool) js.IObject {
-	healthpoint := js.GetSynchronizedWrapper(js.NewObject())
+	healthpoint := js.GetSynchronizedWrapper(js.NewEmptyObject())
 	healthpoint.Put("app", appName)
 	healthpoint.Put("version", version)
 	healthpoint.Put("devmode", dev)

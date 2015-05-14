@@ -4,10 +4,11 @@ import (
 	"bytes"
 	"errors"
 	"fmt"
-	js "github.com/rshmelev/go-json-light"
 	"log"
 	"sync"
 	"time"
+
+	js "github.com/rshmelev/go-json-light"
 )
 
 type AutoLoadFileUpdatedHandler func(oldbytes, newbytes []byte)
@@ -119,7 +120,7 @@ func StartAutoLoadingFile(url string, timeout time.Duration, handler AutoLoadFil
 }
 
 func StartAutoLoadingJSON(url string, timeout time.Duration, handler AutoLoadJSONUpdatedHandler, handleFirstTime bool) *AutoLoadJSON {
-	j := &AutoLoadJSON{json: js.NewObject(), UpdateHandler: handler}
+	j := &AutoLoadJSON{json: js.NewObjectOrNil(), UpdateHandler: handler}
 	handle := handleFirstTime
 	j.autoLoadFile = StartAutoLoadingFile(url, timeout, func(oldbytes, newbytes []byte) {
 		predyn, err2 := js.NewObjectFromBytes(newbytes)

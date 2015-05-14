@@ -149,7 +149,7 @@ func (c *ModernConf) LoadAll() error {
 		var prestate js.IObject
 		prestate, err, _ = js.NewObjectFromFile(c.StateFile, c.ConfLoadTimeout)
 		if err != nil {
-			prestate = js.NewObject()
+			prestate = js.NewEmptyObject()
 			c.ErrorLog("WARNING: failed to load state ("+c.StateFile+"), will start with clear state, error was: ", err)
 		}
 		c.state, _ = js.GetSynchronizedWrapper(prestate).(*js.SynchronizedObjectWrapper)

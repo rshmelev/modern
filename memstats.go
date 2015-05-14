@@ -1,10 +1,11 @@
 package modern
 
 import (
-	js "github.com/rshmelev/go-json-light"
 	"runtime"
 	"sync"
 	"time"
+
+	js "github.com/rshmelev/go-json-light"
 )
 
 var memtracking bool
@@ -12,7 +13,7 @@ var memtrackingMutex sync.RWMutex
 var someMemStats js.IObject
 
 func init() {
-	someMemStats = js.NewObject()
+	someMemStats = js.NewEmptyObject()
 }
 
 func GetSomeMemStats() js.IObject {
@@ -38,17 +39,17 @@ func TrackMemStats() {
 		for {
 			runtime.ReadMemStats(memStats)
 			now := time.Now()
-			s := js.NewObject()
-
-			s.Put("goroutines", (runtime.NumGoroutine()))
-			s.Put("memory.heap.objects", (memStats.HeapObjects))
-			s.Put("memory.allocated", (memStats.Alloc))
-			s.Put("memory.mallocs", (memStats.Mallocs))
-			s.Put("memory.frees", (memStats.Frees))
-			s.Put("memory.gc.total_pause", float64(memStats.PauseTotalNs)/nsInMs)
-			s.Put("memory.heap", (memStats.HeapAlloc))
-			s.Put("memory.sys", (memStats.Sys))
-			s.Put("memory.stack", (memStats.StackInuse))
+			s := js.NewObjectFromMap(map[string]interface{}{
+				"goroutines":            runtime.NumGoroutine(),
+				"memory.heap.objects":   memStats.HeapObjects,
+				"memory.allocated":      memStats.Alloc,
+				"memory.mallocs":        memStats.Mallocs,
+				"memory.frees":          memStats.Frees,
+				"memory.gc.total_pause": float64(memStats.PauseTotalNs) / nsInMs,
+				"memory.heap":           memStats.HeapAlloc,
+				"memory.sys":            memStats.Sys,
+				"memory.stack":          memStats.StackInuse,
+			})
 
 			if lastPauseNs > 0 {
 				pauseSinceLastSample := memStats.PauseTotalNs - lastPauseNs

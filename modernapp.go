@@ -10,14 +10,17 @@ import (
 	"regexp"
 	"runtime"
 	"runtime/debug"
+	"strconv"
 	"strings"
 	"time"
 
 	"github.com/joho/godotenv"
 	"github.com/julienschmidt/httprouter"
 	"github.com/kelseyhightower/envconfig"
+	. "github.com/rshmelev/go-initstruct"
 	interrupts "github.com/rshmelev/go-inthandler"
 	js "github.com/rshmelev/go-json-light"
+	. "github.com/rshmelev/go-ternary/if"
 	"github.com/rshmelev/gologs/libgologs"
 	"github.com/rshmelev/installasservice"
 	"github.com/rshmelev/restarter/librestarter"
@@ -79,11 +82,17 @@ var StopChannel chan struct{}
 type TrivialSetupConf struct {
 	AppName     string
 	CompanyName string
-	Version     string
-	BuildTime   string
-	HttpBind    string
+	CompanySite string
 
-	StaticContentRoot string
+	Version         string
+	GoVersion       string
+	BuildTime       string
+	CodeRev         string
+	ModifiedSources string
+
+	HttpBind string
+
+	StaticContentRoot string `init:"/static/"`
 	WebsocketLogsRoot string
 	MonitorsUrl       string
 	HeapDumpUrl       string
@@ -91,13 +100,15 @@ type TrivialSetupConf struct {
 
 	// these options have default values
 	StaticContentRootURL string
-	HealthPointURL       string
-	LogsPath             string
-	ConfPath             string
+	HealthPointURL       string `init:"/infohub"`
+	LogsPath             string `init:"{{ .AppDir }}/logs"`
+	ConfPath             string `init:"{{ .AppDir }}/conf"`
 
-	StateFile     string
+	StateFile     string `init:"default"`
 	LocalConfFile string
 	DynConfUrl    string
+
+	IsForProduction bool
 }
 
 // company + appname + version + buildtime
@@ -108,17 +119,17 @@ var Debug = false
 
 func TrivialSetup(envconf interface{}, c *TrivialSetupConf) (libgologs.SomeLogger, *ModernConf, *httprouter.Router, *http.Server, js.IObject) {
 
+	if IsForProductionRequest() {
+		AnswerIsForProduction(c.IsForProduction)
+	}
+
 	if matched, err := regexp.Match("go-build\\d+.+", []byte(os.Args[0])); !matched && err == nil {
 		if appdir, err := filepath.Abs(filepath.Dir(os.Args[0])); err == nil {
 			AppDir = appdir
 		}
 	}
 
-	F.EnsureNotEmptyString(&c.StaticContentRootURL, "/static/")
-	F.EnsureNotEmptyString(&c.HealthPointURL, "/infohub")
-	F.EnsureNotEmptyString(&c.LogsPath, "{{ .AppDir }}/logs")
-	F.EnsureNotEmptyString(&c.ConfPath, "{{ .AppDir }}/conf")
-	F.EnsureNotEmptyString(&c.StateFile, "default")
+	InitZeroFieldsRecursively(c)
 
 	Debug = false
 	rand.Seed(time.Now().UTC().UnixNano())
@@ -127,10 +138,32 @@ func TrivialSetup(envconf interface{}, c *TrivialSetupConf) (libgologs.SomeLogge
 	if c.CompanyName == "" {
 		fullname = c.AppName
 	}
-	if c.BuildTime == "" {
-		FullAppString = fullname + " v" + c.Version
-	} else {
-		FullAppString = fullname + " v" + c.Version + " built on " + c.BuildTime
+
+	FullAppString = fullname + " v" + c.Version +
+		If(!c.IsForProduction).Then(" (DEBUG)").Else("").Str()
+	FullAppString += If(c.BuildTime != "").Then(" built on " + c.BuildTime).Else("").Str()
+	FullAppString += If(c.GoVersion != "").Then(" (" + c.GoVersion + ")").Else("").Str()
+
+	if c.CodeRev != "" && len(c.CodeRev) > 6 {
+		mod := ""
+		if c.ModifiedSources != "" {
+			mods := strings.Split(c.ModifiedSources, "\n")
+			firstmods := mods
+			if len(mods) > 3 {
+				firstmods = mods[:3]
+				mods = mods[3:]
+			} else {
+				mods = []string{}
+			}
+			mod = strings.Join(firstmods, ", ") +
+				If(len(mods) > 0).Then(
+					" and "+strconv.Itoa(len(mods))+" more").Else("").Str()
+			if len(mod) > 0 {
+				mod = " + modified " + mod
+			}
+		}
+
+		FullAppString += " (rev=" + c.CodeRev[:6] + mod + ")"
 	}
 
 	//_ = godotenv.Load("sample.env")
@@ -146,8 +179,8 @@ func TrivialSetup(envconf interface{}, c *TrivialSetupConf) (libgologs.SomeLogge
 		stdlog.Fatalln("envconfig.Process of TrivialSetupConf failed: ", enverr)
 	}
 
-	// cool autoreplace of {{ .AppDir }}
-	c_map, _ := js.StructToMap(c)
+	// cool simple autoreplace of {{ .AppDir }}
+	c_map := js.StructToMapOrDie(c)
 	c_new, _ := js.NewObjectFromString(replaceAppDir(c_map.ToString()))
 	c_new.FillStruct(&c)
 
@@ -193,6 +226,12 @@ func TrivialSetup(envconf interface{}, c *TrivialSetupConf) (libgologs.SomeLogge
 	stdlog.Println("std log package integration check...")
 
 	log.Info("starting " + FullAppString)
+	if c.CompanySite != "" {
+		log.Info("get more info about " + c.AppName + " at http://" + c.CompanySite)
+	}
+	if !c.IsForProduction {
+		LogNotForProductionMessage()
+	}
 
 	mconf := SetupConf(c.ConfPath, &ModernConf{
 		DevMode:       dev,
@@ -292,6 +331,41 @@ func env(s, appname string) string {
 func replaceAppDir(s string) string {
 	d := strings.Replace(AppDir, "\\", "\\\\", -1)
 	return strings.Replace(s, "{{ .AppDir }}", d, -1)
+}
+
+func LogNotForProductionMessage() {
+	stdlog.Println("")
+	stdlog.Println("")
+	stdlog.Println("*******************************************************")
+	stdlog.Println("*******************************************************")
+	stdlog.Println("")
+	stdlog.Println("          THIS BUILD IS NOT FOR PRODUCTION !")
+	stdlog.Println("")
+	stdlog.Println("*******************************************************")
+	stdlog.Println("*******************************************************")
+	stdlog.Println("")
+	stdlog.Println("")
+}
+
+func IsForProductionRequest() bool {
+	args := os.Args
+	q := false
+	for _, v := range args {
+		if strings.HasPrefix(v, "__is_for_production") {
+			q = true
+		}
+	}
+	return q
+}
+
+func AnswerIsForProduction(isit bool) {
+	if isit {
+		println("true")
+		os.Exit(0)
+	} else {
+		println("false")
+		os.Exit(1)
+	}
 }
 
 func init() {
